@@ -18,6 +18,13 @@ const GATES = {
   gallop: { speed: 38, bpm: 178, frequency: 1.9, clip: 'Gallop', stride: 0.55, lift: 0.35, duty: 0.42, offsets: [0.42, 0.55, 0.86, 0] },
 };
 
+const HOOF_BEATS = {
+  walk: [0.02, 0.27, 0.52, 0.77],
+  trot: [0.02, 0.52],
+  canter: [0.02, 0.35, 0.68],
+  gallop: [0.02, 0.16, 0.43, 0.7],
+};
+
 async function startThree() {
 let renderer;
 let usingSvgPreview = false;
@@ -917,8 +924,8 @@ const { horseRoot, horseAnimation } = await createHorseAsset();
 const PATH_X = 12.5;
 const PATH_Z = 7.5;
 let pathAngle = 0;
-let selectedGait = 'walk';
-let pace = 0.85;
+let selectedGait = 'gallop';
+let pace = 1;
 let isPlaying = !prefersReducedMotion.matches;
 let activeGaitAction = horseAnimation.gaitActions[selectedGait];
 const gaitTimeScale = (gait, action) => GATES[gait].frequency * action.getClip().duration;
@@ -931,6 +938,11 @@ let isFollowing = true;
 let lastHudUpdate = 0;
 let userOrbiting = false;
 let lastSvgFrame = 0;
+let soundEnabled = false;
+let audioListener;
+let hoofAudio;
+let meadowAudio;
+let hoofBuffers;
 
 function setHorsePath() {
   horseRoot.position.x = Math.sin(pathAngle) * PATH_X;
@@ -939,6 +951,114 @@ function setHorsePath() {
   const tangentZ = PATH_Z * 0.57 * Math.cos(pathAngle * 0.57);
   horseRoot.rotation.y = Math.atan2(tangentX, tangentZ);
 }
+
+function createHoofBuffer(context, gaitName) {
+  const duration = 1 / GATES[gaitName].frequency;
+  const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+  const samples = buffer.getChannelData(0);
+  const impactLength = Math.floor(context.sampleRate * 0.12);
+
+  for (const phase of HOOF_BEATS[gaitName]) {
+    const start = Math.floor(phase * samples.length);
+    for (let i = 0; i < impactLength && start + i < samples.length; i += 1) {
+      const time = i / context.sampleRate;
+      const attack = 1 - Math.exp(-time * 320);
+      const decay = Math.exp(-time * 38);
+      const noise = Math.random() * 2 - 1;
+      const thud = Math.sin(time * Math.PI * 2 * 86) * 0.55;
+      const click = Math.sin(time * Math.PI * 2 * 1450) * 0.24;
+      samples[start + i] += (noise * 0.21 + thud + click) * attack * decay * 0.42;
+    }
+  }
+
+  return buffer;
+}
+
+function createMeadowBuffer(context) {
+  const length = context.sampleRate * 10;
+  const buffer = context.createBuffer(1, length, context.sampleRate);
+  const samples = buffer.getChannelData(0);
+  const fadeLength = Math.floor(context.sampleRate * 0.12);
+  let brownNoise = 0;
+
+  for (let i = 0; i < length; i += 1) {
+    brownNoise = (brownNoise + (Math.random() * 2 - 1) * 0.02) * 0.999;
+    const edgeFade = Math.min(1, i / fadeLength, (length - i - 1) / fadeLength);
+    samples[i] = brownNoise * 0.7 * edgeFade;
+  }
+
+  return buffer;
+}
+
+function initializeAudio() {
+  if (audioListener) return;
+
+  audioListener = new THREE.AudioListener();
+  camera.add(audioListener);
+  hoofAudio = new THREE.PositionalAudio(audioListener);
+  hoofAudio.setRefDistance(4);
+  hoofAudio.setMaxDistance(42);
+  hoofAudio.setRolloffFactor(1.1);
+  hoofAudio.setDistanceModel('inverse');
+  hoofAudio.setVolume(0.42);
+  hoofAudio.setLoop(true);
+  hoofBuffers = Object.fromEntries(
+    Object.keys(GATES).map((gait) => [gait, createHoofBuffer(audioListener.context, gait)]),
+  );
+  hoofAudio.setBuffer(hoofBuffers[selectedGait]);
+  horseRoot.add(hoofAudio);
+
+  meadowAudio = new THREE.Audio(audioListener);
+  meadowAudio.setBuffer(createMeadowBuffer(audioListener.context));
+  meadowAudio.setLoop(true);
+  meadowAudio.setVolume(0.12);
+}
+
+function syncAudioPlayback(resetHooves = false) {
+  if (!audioListener) return;
+
+  if (resetHooves) {
+    if (hoofAudio.isPlaying) hoofAudio.stop();
+    hoofAudio.setBuffer(hoofBuffers[selectedGait]);
+  }
+
+  if (!soundEnabled) {
+    if (hoofAudio.isPlaying) hoofAudio.stop();
+    if (meadowAudio.isPlaying) meadowAudio.stop();
+    return;
+  }
+
+  if (!meadowAudio.isPlaying) meadowAudio.play();
+  if (isPlaying) {
+    if (!hoofAudio.isPlaying) hoofAudio.play();
+    hoofAudio.setPlaybackRate(pace);
+  } else if (hoofAudio.isPlaying) {
+    hoofAudio.stop();
+  }
+}
+
+async function toggleSound() {
+  if (soundEnabled) {
+    soundEnabled = false;
+    syncAudioPlayback();
+    updateHud();
+    return;
+  }
+
+  try {
+    initializeAudio();
+    await audioListener.context.resume();
+    if (audioListener.context.state !== 'running') {
+      throw new Error('The browser did not allow the audio context to start.');
+    }
+    soundEnabled = true;
+    syncAudioPlayback(true);
+    updateHud();
+  } catch (error) {
+    console.error('Horse audio could not be enabled.', error);
+  }
+}
+
 setHorsePath();
 controls.target.copy(horseRoot.position).add(new THREE.Vector3(0, 1.4, 0));
 camera.position.copy(controls.target).add(cameraOffset);
@@ -971,6 +1091,12 @@ function updateHud() {
   cameraButton.classList.toggle('is-active', isFollowing);
   cameraButton.setAttribute('aria-pressed', String(isFollowing));
   cameraButton.title = isFollowing ? 'Turn follow camera off' : 'Turn follow camera on';
+
+  const audioButton = document.querySelector('#audio-button');
+  audioButton.classList.toggle('is-active', soundEnabled);
+  audioButton.setAttribute('aria-pressed', String(soundEnabled));
+  audioButton.setAttribute('aria-label', soundEnabled ? 'Mute horse sounds' : 'Enable horse sounds');
+  audioButton.title = soundEnabled ? 'Mute horse sounds' : 'Enable horse sounds';
 }
 
 function setGait(gait) {
@@ -986,6 +1112,7 @@ function setGait(gait) {
     previousAction.stop();
     activeGaitAction.stop();
   }
+  syncAudioPlayback(true);
   updateHud();
 }
 
@@ -999,6 +1126,7 @@ function setPlaying(playing) {
     horseAnimation.idleAction.reset().play();
     activeGaitAction.crossFadeTo(horseAnimation.idleAction, 0.32, false);
   }
+  syncAudioPlayback();
   updateHud();
 }
 
@@ -1010,9 +1138,12 @@ document.querySelector('#play-button').addEventListener('click', () => {
   setPlaying(!isPlaying);
 });
 
+document.querySelector('#audio-button').addEventListener('click', toggleSound);
+
 document.querySelector('#speed-slider').addEventListener('input', (event) => {
   pace = Number(event.currentTarget.value) / 100;
   activeGaitAction.setEffectiveTimeScale(gaitTimeScale(selectedGait, activeGaitAction) * pace);
+  syncAudioPlayback();
   updateHud();
 });
 
@@ -1076,16 +1207,19 @@ function animate() {
 
   if (isPlaying) {
     const metersPerSecond = (gait.speed / 3.6) * pace;
-    const meanRadius = (PATH_X + PATH_Z) * 0.5;
-    pathAngle += (metersPerSecond * 0.13 * delta) / meanRadius;
+    const tangentSpeed = Math.hypot(
+      PATH_X * Math.cos(pathAngle),
+      PATH_Z * 0.57 * Math.cos(pathAngle * 0.57),
+    );
+    pathAngle += (metersPerSecond * delta) / Math.max(tangentSpeed, 0.001);
     setHorsePath();
   }
 
   if (isFollowing && !userOrbiting) {
     const nextTarget = horseRoot.position.clone().add(new THREE.Vector3(0, 1.4, 0));
     const nextPosition = nextTarget.clone().add(cameraOffset);
-    controls.target.lerp(nextTarget, 1 - Math.exp(-delta * 4.2));
-    camera.position.lerp(nextPosition, 1 - Math.exp(-delta * 4.2));
+    controls.target.lerp(nextTarget, 1 - Math.exp(-delta * 8));
+    camera.position.lerp(nextPosition, 1 - Math.exp(-delta * 8));
   } else if (!isFollowing) {
     cameraOffset.copy(camera.position).sub(controls.target);
   }

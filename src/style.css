@@ -832,6 +832,30 @@ kbd {
   }
 }
 
+@media (min-width: 651px) and (max-width: 780px) {
+  .control-row {
+    gap: 8px;
+  }
+
+  .gait-selector {
+    flex-basis: 300px;
+  }
+
+  .gait-button {
+    padding-right: 5px;
+    padding-left: 5px;
+  }
+
+  .speed-control {
+    width: 95px;
+    flex-basis: 95px;
+  }
+
+  .camera-button {
+    min-width: 47px;
+  }
+}
+
 @media (max-width: 650px) {
   body {
     overflow: auto;
@@ -970,7 +994,7 @@ kbd {
 
   .control-row {
     display: grid;
-    grid-template-columns: 43px minmax(100px, 1fr) 57px;
+    grid-template-columns: 43px minmax(100px, 1fr) 55px 57px;
     gap: 12px;
   }
 
@@ -1015,6 +1039,10 @@ kbd {
   }
 
   .camera-button {
+    grid-column: 4;
+  }
+
+  .sound-button {
     grid-column: 3;
     grid-row: 2;
   }

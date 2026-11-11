@@ -91,13 +91,13 @@
             </div>
             <div class="vital-signs" aria-live="polite">
               <span class="vital-label"><span class="pulse-dot" aria-hidden="true"></span> HEART RATE</span>
-              <strong id="heart-rate">42 <small>BPM</small></strong>
+              <strong id="heart-rate">178 <small>BPM</small></strong>
             </div>
           </div>
 
           <div class="control-row">
             <div class="gait-selector" role="group" aria-label="Horse gait">
-              <button class="gait-button is-selected" type="button" data-gait="walk" aria-pressed="true">
+              <button class="gait-button" type="button" data-gait="walk" aria-pressed="false">
                 <span class="gait-number">01</span><span class="gait-name">Walk</span><span class="gait-tempo">4-beat</span>
               </button>
               <button class="gait-button" type="button" data-gait="trot" aria-pressed="false">
@@ -106,7 +106,7 @@
               <button class="gait-button" type="button" data-gait="canter" aria-pressed="false">
                 <span class="gait-number">03</span><span class="gait-name">Canter</span><span class="gait-tempo">3-beat</span>
               </button>
-              <button class="gait-button" type="button" data-gait="gallop" aria-pressed="false">
+              <button class="gait-button is-selected" type="button" data-gait="gallop" aria-pressed="true">
                 <span class="gait-number">04</span><span class="gait-name">Gallop</span><span class="gait-tempo">4-beat</span>
               </button>
             </div>
@@ -126,11 +126,19 @@
             <div class="speed-control">
               <div class="speed-heading">
                 <label for="speed-slider">PACE</label>
-                <output id="speed-value" for="speed-slider">4.8 <small>KM/H</small></output>
+                <output id="speed-value" for="speed-slider">38.0 <small>KM/H</small></output>
               </div>
-              <input id="speed-slider" type="range" min="65" max="125" value="85" aria-label="Simulation pace" />
-              <div class="speed-scale"><span>EASY</span><span>BRISK</span></div>
+              <input id="speed-slider" type="range" min="65" max="160" value="100" aria-label="Simulation pace" />
+              <div class="speed-scale"><span>WALK</span><span>SPRINT</span></div>
             </div>
+
+            <button class="camera-button sound-button" id="audio-button" type="button" aria-pressed="false" aria-label="Enable horse sounds" title="Enable horse sounds">
+              <svg viewBox="0 0 22 22" fill="none" aria-hidden="true">
+                <path d="M3.5 9v4h3.1l4.4 3.5v-11L6.6 9H3.5Z" stroke="currentColor" stroke-width="1.45" stroke-linejoin="round" />
+                <path d="M14 8.2a4.2 4.2 0 0 1 0 5.6m2.5-8a7.6 7.6 0 0 1 0 10.4" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" />
+              </svg>
+              <span>SOUND</span>
+            </button>
 
             <span class="deck-divider camera-divider" aria-hidden="true"></span>
 

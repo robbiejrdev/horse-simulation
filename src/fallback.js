@@ -18,6 +18,10 @@ export function startFallback() {
   cameraButton.setAttribute('aria-pressed', 'false');
   cameraButton.setAttribute('aria-label', 'Follow camera unavailable in illustrated preview');
   cameraButton.title = 'Follow camera is available when WebGL is supported';
+  const audioButton = document.querySelector('#audio-button');
+  audioButton.disabled = true;
+  audioButton.setAttribute('aria-label', 'Horse audio unavailable in illustrated preview');
+  audioButton.title = 'Horse audio is available in the Three.js scene';
   const canvas = document.createElement('canvas');
   canvas.className = 'fallback-scene-canvas';
   canvas.setAttribute('role', 'img');
@@ -36,9 +40,9 @@ export function startFallback() {
   }
 
   const state = {
-    gait: 'walk',
+    gait: 'gallop',
     playing: !reducedMotion.matches,
-    pace: 0.85,
+    pace: 1,
     time: 0,
     facing: 1,
     zoom: 1,
@@ -299,7 +303,7 @@ export function startFallback() {
 
   function drawHorse(now) {
     const gait = GAITS[state.gait];
-    const cycle = state.time * gait.frequency * Math.PI * 2;
+    const cycle = state.time * gait.frequency * state.pace * Math.PI * 2;
     const horseScale = Math.min(height / 4.3, width / 13.8) * state.zoom;
     const horseX = width * 0.52;
     const horseGround = height * 0.81;
