@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { SVGRenderer } from 'three/addons/renderers/SVGRenderer.js';
 import { startFallback } from './fallback.js';
 import './style.css';
@@ -52,9 +53,9 @@ mount.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xb9c9c0);
-scene.fog = new THREE.Fog(0xc3d0c4, 42, 116);
+scene.fog = new THREE.Fog(0xbcc9c8, 72, 220);
 
-const camera = new THREE.PerspectiveCamera(39, 1, 0.1, 220);
+const camera = new THREE.PerspectiveCamera(39, 1, 0.1, 420);
 let cameraOffset = new THREE.Vector3(4.4, 2.55, 5.35);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -66,12 +67,12 @@ controls.minPolarAngle = 0.16;
 controls.enablePan = false;
 controls.target.set(0, 1.45, 0);
 
-scene.add(new THREE.HemisphereLight(0xe4f0e2, 0x7d745b, 1.72));
+scene.add(new THREE.HemisphereLight(0xe4f0e2, 0x7d745b, 1.05));
 const coolFill = new THREE.DirectionalLight(0xc4d8e6, 0.68);
 coolFill.position.set(13, 9, -15);
 scene.add(coolFill);
 
-const sun = new THREE.DirectionalLight(0xffebce, 3.05);
+const sun = new THREE.DirectionalLight(0xffebce, 2.35);
 sun.position.set(-18, 30, 12);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -256,25 +257,9 @@ function loftedBody(parent, sections, mat) {
   return addMesh(parent, geometry, mat, [0, 0, 0]);
 }
 
-function cylinderBetween(parent, start, end, radius, mat, radialSegments = 8) {
-  const a = new THREE.Vector3(...start);
-  const b = new THREE.Vector3(...end);
-  const direction = b.clone().sub(a);
-  const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius, radius, direction.length(), radialSegments),
-    mat,
-  );
-  mesh.position.copy(a).add(b).multiplyScalar(0.5);
-  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  parent.add(mesh);
-  return mesh;
-}
-
 function createGround() {
   const terrainSegments = usingSvgPreview ? 40 : 100;
-  const geometry = new THREE.PlaneGeometry(180, 180, terrainSegments, terrainSegments);
+  const geometry = new THREE.PlaneGeometry(420, 420, terrainSegments, terrainSegments);
   const positions = geometry.attributes.position;
   const colors = [];
   const low = new THREE.Color(0x667858);
@@ -284,12 +269,12 @@ function createGround() {
   for (let i = 0; i < positions.count; i += 1) {
     const x = positions.getX(i);
     const z = -positions.getY(i);
-    const wave = Math.sin(x * 0.11) * Math.cos(z * 0.095) * 0.13
-      + Math.sin((x + z) * 0.047) * 0.16
-      + (random() - 0.5) * 0.055;
+    const wave = Math.sin(x * 0.052) * Math.cos(z * 0.039) * 0.2
+      + Math.sin((x + z) * 0.021) * 0.22
+      + Math.sin((x - z) * 0.013) * 0.12;
     positions.setZ(i, wave);
-    const tint = wave > 0.11 ? high.clone().lerp(mid, 0.36) : mid.clone().lerp(low, Math.max(0, -wave) * 2.4);
-    const variation = 0.94 + random() * 0.11;
+    const tint = wave > 0.11 ? high.clone().lerp(mid, 0.36) : mid.clone().lerp(low, Math.max(0, -wave) * 1.7);
+    const variation = 0.97 + 0.03 * Math.sin(x * 0.18 + z * 0.11);
     tint.multiplyScalar(variation);
     colors.push(tint.r, tint.g, tint.b);
   }
@@ -298,7 +283,7 @@ function createGround() {
   geometry.rotateX(-Math.PI / 2);
   geometry.computeVertexNormals();
   const groundTexture = usingSvgPreview ? null : makeMeadowTexture();
-  if (groundTexture) groundTexture.repeat.set(34, 34);
+  if (groundTexture) groundTexture.repeat.set(78, 78);
   const ground = addMesh(
     scene,
     geometry,
@@ -370,48 +355,28 @@ function createSky() {
   scene.add(sky);
 }
 
-function createTrack() {
-  const track = addMesh(
-    scene,
-    new THREE.RingGeometry(0.78, 1, 160),
-    material(0x907354, 1),
-    [0, 0.012, 0],
-    { castShadow: false },
-  );
-  track.rotation.x = -Math.PI / 2;
-  track.scale.set(8.8, 5.35, 1);
-  track.material.side = THREE.DoubleSide;
+function loadOutdoorEnvironment() {
+  if (usingSvgPreview) return;
 
-  const edge = addMesh(
-    scene,
-    new THREE.RingGeometry(0.775, 0.785, 160),
-    material(0xb49a76, 1),
-    [0, 0.017, 0],
-    { castShadow: false },
+  const pmremGenerator = new THREE.PMREMGenerator(renderer);
+  const loader = new HDRLoader();
+  loader.load(
+    `${import.meta.env.BASE_URL}environments/kloppenheim_06_puresky_1k.hdr`,
+    (texture) => {
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      scene.background = texture;
+      const environment = pmremGenerator.fromEquirectangular(texture);
+      scene.environment = environment.texture;
+      scene.environmentIntensity = 0.72;
+      pmremGenerator.dispose();
+    },
+    undefined,
+    (error) => {
+      pmremGenerator.dispose();
+      console.error('The outdoor HDR environment could not be loaded.', error);
+      createSky();
+    },
   );
-  edge.rotation.x = -Math.PI / 2;
-  edge.scale.set(8.8, 5.35, 1);
-  edge.material.side = THREE.DoubleSide;
-
-  const postMat = material(0x604d37, 0.93);
-  const railMat = material(0x765d3e, 0.9);
-  const postGeometry = new THREE.CylinderGeometry(0.055, 0.076, 1.14, 8);
-  const count = 44;
-  const points = [];
-  for (let i = 0; i < count; i += 1) {
-    const angle = (i / count) * Math.PI * 2;
-    const x = 10.35 * Math.cos(angle);
-    const z = 6.72 * Math.sin(angle);
-    points.push([x, z]);
-    addMesh(scene, postGeometry, postMat, [x, 0.57, z], { receiveShadow: false });
-  }
-  for (let i = 0; i < count; i += 1) {
-    const [x1, z1] = points[i];
-    const [x2, z2] = points[(i + 1) % count];
-    for (const y of [0.47, 0.91]) {
-      cylinderBetween(scene, [x1, y, z1], [x2, y, z2], 0.044, railMat, 7);
-    }
-  }
 }
 
 function createGrass() {
@@ -433,9 +398,6 @@ function createGrass() {
   while (placed < 3300) {
     const x = (random() - 0.5) * 84;
     const z = (random() - 0.5) * 84;
-    const trackDistance = Math.sqrt((x * x) / (8.8 * 8.8) + (z * z) / (5.35 * 5.35));
-    if (trackDistance > 0.775 && trackDistance < 1.04) continue;
-
     dummy.position.set(x, -0.045, z);
     dummy.rotation.set(0, random() * Math.PI, (random() - 0.5) * 0.17);
     const scale = 0.55 + random() * 1.05;
@@ -467,99 +429,38 @@ function createTree(x, z, scale = 1, variant = 0) {
 }
 
 function createTreeLine() {
-  let planted = 0;
-  let attempts = 0;
-  while (planted < (usingSvgPreview ? 28 : 58) && attempts < 300) {
-    attempts += 1;
-    const x = (random() - 0.5) * 88;
-    const z = (random() - 0.5) * 88;
-    const paddockDistance = (x * x) / (16 * 16) + (z * z) / (12 * 12);
-    if (paddockDistance < 1 || Math.hypot(x + 19, z + 17) < 9) continue;
-    createTree(x, z, 0.72 + random() * 0.68, Math.floor(random() * 3));
-    planted += 1;
+  const groupCount = usingSvgPreview ? 9 : 18;
+  for (let i = 0; i < groupCount; i += 1) {
+    const angle = (i / groupCount) * Math.PI * 2 + (random() - 0.5) * 0.18;
+    const distance = 55 + random() * 65;
+    const centerX = Math.cos(angle) * distance;
+    const centerZ = Math.sin(angle) * distance;
+    const count = 2 + Math.floor(random() * 4);
+    for (let j = 0; j < count; j += 1) {
+      const x = centerX + (random() - 0.5) * 18;
+      const z = centerZ + (random() - 0.5) * 18;
+      createTree(x, z, 0.8 + random() * 0.9, Math.floor(random() * 3));
+    }
   }
 
   const hillMaterial = material(0x859486, 1);
   for (const [x, z, sx, sy, sz] of [
-    [-39, -38, 21, 7, 10],
-    [-10, -44, 25, 8, 12],
-    [24, -40, 23, 7, 13],
-    [48, -22, 17, 7, 19],
-    [-51, 2, 16, 8, 18],
-    [42, 20, 18, 6, 14],
+    [-180, -150, 88, 18, 40],
+    [-54, -205, 94, 24, 36],
+    [120, -180, 108, 25, 52],
+    [202, -52, 86, 20, 72],
+    [-190, 62, 92, 23, 60],
+    [96, 188, 104, 22, 46],
   ]) {
-    ellipsoid(scene, hillMaterial, [x, 1.1, z], [sx, sy, sz], [0, 0, 0], false);
+    ellipsoid(scene, hillMaterial, [x, -2.8, z], [sx, sy, sz], [0, 0, 0], false);
   }
-}
-
-function createBarn() {
-  const barn = new THREE.Group();
-  barn.position.set(-20, 0, -16);
-  const wall = material(0x9e5942, 0.9);
-  const trim = material(0xe0d4b8, 0.85);
-  const roof = material(0x514b3b, 0.94);
-  const door = material(0x704635, 0.92);
-  addMesh(barn, new THREE.BoxGeometry(5.2, 2.75, 4.2), wall, [0, 1.38, 0]);
-  const gable = new THREE.Shape();
-  gable.moveTo(-2.6, 0);
-  gable.lineTo(0, 1.5);
-  gable.lineTo(2.6, 0);
-  gable.closePath();
-  const gableMesh = addMesh(barn, new THREE.ShapeGeometry(gable), wall, [0, 2.75, 2.11]);
-  gableMesh.castShadow = true;
-  addMesh(
-    barn,
-    new THREE.BoxGeometry(3.12, 0.16, 4.65),
-    roof,
-    [-1.22, 3.39, 0],
-    { rotation: [0, 0, -0.42] },
-  );
-  addMesh(
-    barn,
-    new THREE.BoxGeometry(3.12, 0.16, 4.65),
-    roof,
-    [1.22, 3.39, 0],
-    { rotation: [0, 0, 0.42] },
-  );
-  addMesh(barn, new THREE.BoxGeometry(2.15, 2.05, 0.12), door, [0, 1.05, 2.17]);
-  addMesh(barn, new THREE.BoxGeometry(0.09, 2.2, 0.13), trim, [-1.15, 1.08, 2.18]);
-  addMesh(barn, new THREE.BoxGeometry(0.09, 2.2, 0.13), trim, [1.15, 1.08, 2.18]);
-  addMesh(barn, new THREE.BoxGeometry(2.4, 0.1, 0.14), trim, [0, 2.18, 2.18]);
-  addMesh(barn, new THREE.BoxGeometry(0.08, 2.05, 0.08), trim, [0, 1.05, 2.25]);
-  addMesh(barn, new THREE.BoxGeometry(2.12, 0.08, 0.08), trim, [0, 1.05, 2.25]);
-  for (const x of [-1.65, 1.65]) {
-    addMesh(barn, new THREE.BoxGeometry(0.66, 0.72, 0.1), material(0x536255, 0.52), [x, 1.85, 2.16]);
-    addMesh(barn, new THREE.BoxGeometry(0.76, 0.08, 0.12), trim, [x, 2.25, 2.17]);
-    addMesh(barn, new THREE.BoxGeometry(0.08, 0.86, 0.12), trim, [x, 1.84, 2.17]);
-  }
-  scene.add(barn);
 }
 
 function createMeadowProps() {
-  createSky();
+  if (usingSvgPreview) createSky();
   createGround();
-  createTrack();
   createGrass();
   createTreeLine();
-  createBarn();
-
-  const troughMat = material(0x746348, 0.92);
-  const trough = new THREE.Group();
-  trough.position.set(-5.3, 0, -8.7);
-  addMesh(trough, new THREE.BoxGeometry(1.7, 0.36, 0.66), troughMat, [0, 0.35, 0]);
-  addMesh(trough, new THREE.BoxGeometry(1.48, 0.06, 0.45), material(0x81939a, 0.25, { metalness: 0.1 }), [0, 0.55, 0]);
-  for (const x of [-0.65, 0.65]) {
-    addMesh(trough, new THREE.BoxGeometry(0.09, 0.43, 0.09), troughMat, [x, 0.22, -0.22]);
-    addMesh(trough, new THREE.BoxGeometry(0.09, 0.43, 0.09), troughMat, [x, 0.22, 0.22]);
-  }
-  scene.add(trough);
-
-  const sunGlow = new THREE.Mesh(
-    new THREE.SphereGeometry(1.65, 24, 16),
-    new THREE.MeshBasicMaterial({ color: 0xffe6bd, fog: false }),
-  );
-  sunGlow.position.set(-42, 31, -82);
-  scene.add(sunGlow);
 }
 
 function makeHorse() {
@@ -586,9 +487,6 @@ function makeHorse() {
   const maneMat = material(0x30231c, 0.86);
   const maneLight = material(0x483126, 0.85);
   const hoofMat = material(0x332a23, 0.65);
-  const saddleMat = material(0x302d28, 0.62);
-  const saddlePadMat = material(0x56614c, 0.9);
-  const bridleMat = material(0x31271f, 0.68);
   const eyeMat = material(0x171411, 0.32);
   const eyeShineMat = new THREE.MeshBasicMaterial({ color: 0xf3e7d0 });
   const nostrilMat = material(0x342017, 0.9);
@@ -736,38 +634,6 @@ function makeHorse() {
       5,
     );
   }
-
-  const saddlePad = ellipsoid(horse, saddlePadMat, [0, 2.17, -0.11], [0.45, 0.105, 0.6], [0, 0, 0]);
-  saddlePad.rotation.z = 0.02;
-  ellipsoid(horse, saddleMat, [0, 2.27, -0.13], [0.37, 0.14, 0.43], [0.02, 0, 0]);
-  ellipsoid(horse, saddleMat, [0, 2.34, 0.04], [0.32, 0.11, 0.25], [-0.08, 0, 0]);
-  ellipsoid(horse, saddleMat, [0, 2.36, -0.42], [0.33, 0.12, 0.16], [0.13, 0, 0]);
-
-  const leatherLine = (points, radius = 0.024) => {
-    const curve = new THREE.CatmullRomCurve3(points.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
-    const strap = addMesh(horse, new THREE.TubeGeometry(curve, 22, radius, 7, false), bridleMat, [0, 0, 0]);
-    strap.castShadow = false;
-    return strap;
-  };
-  leatherLine([[-0.42, 2.18, -0.3], [-0.3, 1.68, -0.23], [0, 1.56, -0.14], [0.3, 1.68, -0.23], [0.42, 2.18, -0.3]], 0.031);
-  leatherLine([[-0.4, 2.2, -0.3], [-0.46, 2.12, 0.1], [-0.42, 2.04, 0.45], [0, 2.0, 0.78], [0.42, 2.04, 0.45], [0.46, 2.12, 0.1], [0.4, 2.2, -0.3]], 0.023);
-
-  for (const side of [-1, 1]) {
-    leatherLine([
-      [side * 0.14, 3.02, 1.27],
-      [side * 0.23, 2.96, 1.36],
-      [side * 0.23, 2.78, 1.52],
-      [side * 0.17, 2.68, 1.65],
-    ], 0.019);
-    leatherLine([
-      [side * 0.21, 2.94, 1.38],
-      [side * 0.26, 2.84, 1.48],
-      [side * 0.21, 2.73, 1.57],
-      [side * 0.1, 2.69, 1.68],
-    ], 0.015);
-  }
-  leatherLine([[-0.21, 2.91, 1.4], [0, 2.96, 1.38], [0.21, 2.91, 1.4]], 0.02);
-  leatherLine([[-0.16, 2.67, 1.62], [0, 2.63, 1.69], [0.16, 2.67, 1.62]], 0.022);
 
   const legs = [];
   function makeLeg(side, z, isHind) {
@@ -956,11 +822,12 @@ function createHorseAnimations(horse, legs, headRig, tail) {
   return { mixer, idleAction, gaitActions };
 }
 
+loadOutdoorEnvironment();
 createMeadowProps();
 const { horseRoot, horse, legs, tail, headRig } = makeHorse();
 
-const PATH_X = 8.05;
-const PATH_Z = 4.85;
+const PATH_X = 12.5;
+const PATH_Z = 7.5;
 let pathAngle = 0;
 let selectedGait = 'walk';
 let pace = 0.85;
@@ -979,9 +846,9 @@ let lastSvgFrame = 0;
 
 function setHorsePath() {
   horseRoot.position.x = Math.sin(pathAngle) * PATH_X;
-  horseRoot.position.z = Math.cos(pathAngle) * PATH_Z;
+  horseRoot.position.z = Math.sin(pathAngle * 0.57) * PATH_Z;
   const tangentX = PATH_X * Math.cos(pathAngle);
-  const tangentZ = -PATH_Z * Math.sin(pathAngle);
+  const tangentZ = PATH_Z * 0.57 * Math.cos(pathAngle * 0.57);
   horseRoot.rotation.y = Math.atan2(tangentX, tangentZ);
 }
 setHorsePath();
