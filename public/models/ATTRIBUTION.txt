@@ -1,0 +1,3 @@
+Horse model and rig from Quaternius' Ultimate Animated Animal Pack.
+Source: https://quaternius.com/packs/ultimateanimatedanimals.html
+License: CC0 1.0 Universal

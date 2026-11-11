@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { SVGRenderer } from 'three/addons/renderers/SVGRenderer.js';
 import { startFallback } from './fallback.js';
@@ -11,13 +12,13 @@ const loadingState = document.querySelector('#loading-state');
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const GATES = {
-  walk: { speed: 5.6, bpm: 42, frequency: 0.74, stride: 0.23, lift: 0.16, duty: 0.68, offsets: [0.75, 0.25, 0, 0.5] },
-  trot: { speed: 13.2, bpm: 96, frequency: 1.35, stride: 0.34, lift: 0.23, duty: 0.58, offsets: [0, 0.5, 0.5, 0] },
-  canter: { speed: 19.8, bpm: 132, frequency: 1.55, stride: 0.43, lift: 0.29, duty: 0.55, offsets: [0.34, 0.67, 0.67, 0] },
-  gallop: { speed: 38, bpm: 178, frequency: 1.9, stride: 0.55, lift: 0.35, duty: 0.42, offsets: [0.42, 0.55, 0.86, 0] },
+  walk: { speed: 5.6, bpm: 42, frequency: 0.74, clip: 'Walk', stride: 0.23, lift: 0.16, duty: 0.68, offsets: [0.75, 0.25, 0, 0.5] },
+  trot: { speed: 13.2, bpm: 96, frequency: 1.35, clip: 'Walk', stride: 0.34, lift: 0.23, duty: 0.58, offsets: [0, 0.5, 0.5, 0] },
+  canter: { speed: 19.8, bpm: 132, frequency: 1.55, clip: 'Gallop', stride: 0.43, lift: 0.29, duty: 0.55, offsets: [0.34, 0.67, 0.67, 0] },
+  gallop: { speed: 38, bpm: 178, frequency: 1.9, clip: 'Gallop', stride: 0.55, lift: 0.35, duty: 0.42, offsets: [0.42, 0.55, 0.86, 0] },
 };
 
-function startThree() {
+async function startThree() {
 let renderer;
 let usingSvgPreview = false;
 try {
@@ -463,7 +464,7 @@ function createMeadowProps() {
   createTreeLine();
 }
 
-function makeHorse() {
+function makeProceduralHorse() {
   const horseRoot = new THREE.Group();
   const horse = new THREE.Group();
   horse.name = 'horse-rig';
@@ -815,16 +816,103 @@ function createHorseAnimations(horse, legs, headRig, tail) {
   for (const [name, gait] of Object.entries(GATES)) {
     const action = mixer.clipAction(makeGaitClip(name, gait));
     action.setLoop(THREE.LoopRepeat, Infinity);
-    action.setEffectiveTimeScale(gait.frequency);
+    action.setEffectiveTimeScale(gait.frequency * action.getClip().duration);
     gaitActions[name] = action;
   }
 
   return { mixer, idleAction, gaitActions };
 }
 
+async function createHorseAsset() {
+  let gltf;
+  try {
+    gltf = await new GLTFLoader().loadAsync(
+      `${import.meta.env.BASE_URL}models/quaternius-horse.glb`,
+    );
+  } catch (error) {
+    console.error('The animated horse model could not be loaded; using the procedural fallback.', error);
+    const procedural = makeProceduralHorse();
+    return {
+      horseRoot: procedural.horseRoot,
+      horseAnimation: createHorseAnimations(
+        procedural.horse,
+        procedural.legs,
+        procedural.headRig,
+        procedural.tail,
+      ),
+    };
+  }
+
+  const horse = gltf.scene;
+  horse.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(horse);
+  const size = bounds.getSize(new THREE.Vector3());
+  if (size.y <= 0 || size.z <= 0) {
+    throw new Error('The animated horse model has invalid dimensions.');
+  }
+
+  const modelScale = 2.4 / size.y;
+  horse.scale.setScalar(modelScale);
+  horse.position.set(
+    -(bounds.min.x + bounds.max.x) * 0.5 * modelScale,
+    -bounds.min.y * modelScale,
+    -(bounds.min.z + bounds.max.z) * 0.5 * modelScale,
+  );
+  horse.traverse((object) => {
+    if (!object.isMesh) return;
+    object.castShadow = true;
+    object.receiveShadow = true;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    materials.forEach((horseMaterial) => {
+      const name = (horseMaterial.name ?? '').toLowerCase();
+      horseMaterial.metalness = 0;
+      horseMaterial.roughness = name.includes('eye')
+        ? 0.3
+        : name.includes('hoof')
+          ? 0.66
+          : name.includes('hair')
+            ? 0.9
+            : 0.82;
+    });
+  });
+
+  const horseRoot = new THREE.Group();
+  horseRoot.name = 'horse-root';
+  horseRoot.add(horse);
+  const shadow = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 48),
+    new THREE.MeshBasicMaterial({ color: 0x35402f, transparent: true, opacity: 0.18, depthWrite: false }),
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.scale.set(0.7, 1.35, 1);
+  shadow.position.y = 0.025;
+  horseRoot.add(shadow);
+  scene.add(horseRoot);
+
+  const mixer = new THREE.AnimationMixer(horse);
+  const clipFor = (name) => {
+    const clip = gltf.animations.find((animation) => animation.name === name);
+    if (!clip) throw new Error(`The animated horse model is missing its ${name} clip.`);
+    return clip;
+  };
+  const idleAction = mixer.clipAction(clipFor('Idle'));
+  idleAction.setLoop(THREE.LoopRepeat, Infinity);
+  const gaitActions = {};
+  for (const [name, gait] of Object.entries(GATES)) {
+    const clip = clipFor(gait.clip).clone();
+    clip.name = `${clip.name}-${name}`;
+    const action = mixer.clipAction(clip);
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.setEffectiveTimeScale(gait.frequency * action.getClip().duration);
+    gaitActions[name] = action;
+  }
+
+  return { horseRoot, horseAnimation: { mixer, idleAction, gaitActions } };
+}
+
 loadOutdoorEnvironment();
 createMeadowProps();
-const { horseRoot, horse, legs, tail, headRig } = makeHorse();
+const { horseRoot, horseAnimation } = await createHorseAsset();
 
 const PATH_X = 12.5;
 const PATH_Z = 7.5;
@@ -832,10 +920,10 @@ let pathAngle = 0;
 let selectedGait = 'walk';
 let pace = 0.85;
 let isPlaying = !prefersReducedMotion.matches;
-const horseAnimation = createHorseAnimations(horse, legs, headRig, tail);
 let activeGaitAction = horseAnimation.gaitActions[selectedGait];
+const gaitTimeScale = (gait, action) => GATES[gait].frequency * action.getClip().duration;
 if (isPlaying) {
-  activeGaitAction.reset().setEffectiveTimeScale(GATES[selectedGait].frequency * pace).play();
+  activeGaitAction.reset().setEffectiveTimeScale(gaitTimeScale(selectedGait, activeGaitAction) * pace).play();
 } else {
   horseAnimation.idleAction.reset().play();
 }
@@ -892,7 +980,7 @@ function setGait(gait) {
   selectedGait = gait;
   activeGaitAction = horseAnimation.gaitActions[gait];
   if (isPlaying) {
-    activeGaitAction.reset().setEffectiveTimeScale(GATES[gait].frequency * pace).play();
+    activeGaitAction.reset().setEffectiveTimeScale(gaitTimeScale(gait, activeGaitAction) * pace).play();
     previousAction.crossFadeTo(activeGaitAction, 0.42, false);
   } else {
     previousAction.stop();
@@ -905,7 +993,7 @@ function setPlaying(playing) {
   if (playing === isPlaying) return;
   isPlaying = playing;
   if (isPlaying) {
-    activeGaitAction.reset().setEffectiveTimeScale(GATES[selectedGait].frequency * pace).play();
+    activeGaitAction.reset().setEffectiveTimeScale(gaitTimeScale(selectedGait, activeGaitAction) * pace).play();
     horseAnimation.idleAction.crossFadeTo(activeGaitAction, 0.32, false);
   } else {
     horseAnimation.idleAction.reset().play();
@@ -924,7 +1012,7 @@ document.querySelector('#play-button').addEventListener('click', () => {
 
 document.querySelector('#speed-slider').addEventListener('input', (event) => {
   pace = Number(event.currentTarget.value) / 100;
-  activeGaitAction.setEffectiveTimeScale(GATES[selectedGait].frequency * pace);
+  activeGaitAction.setEffectiveTimeScale(gaitTimeScale(selectedGait, activeGaitAction) * pace);
   updateHud();
 });
 
@@ -1020,4 +1108,7 @@ updateHud();
 animate();
 }
 
-startThree();
+startThree().catch((error) => {
+  console.error('The horse simulation could not be initialized.', error);
+  startFallback();
+});
