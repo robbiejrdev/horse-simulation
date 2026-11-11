@@ -10,10 +10,10 @@ const loadingState = document.querySelector('#loading-state');
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const GATES = {
-  walk: { speed: 5.6, bpm: 42, frequency: 0.74, stride: 0.23, lift: 0.16, phases: [0, Math.PI, Math.PI * 1.5, Math.PI * 0.5] },
-  trot: { speed: 13.2, bpm: 96, frequency: 1.35, stride: 0.34, lift: 0.23, phases: [0, Math.PI, Math.PI, 0] },
-  canter: { speed: 19.8, bpm: 132, frequency: 1.55, stride: 0.43, lift: 0.29, phases: [0, Math.PI * 0.92, Math.PI * 0.56, -Math.PI * 0.48] },
-  gallop: { speed: 38, bpm: 178, frequency: 1.9, stride: 0.55, lift: 0.35, phases: [0, Math.PI * 0.13, -Math.PI * 0.92, -Math.PI * 0.8] },
+  walk: { speed: 5.6, bpm: 42, frequency: 0.74, stride: 0.23, lift: 0.16, duty: 0.68, offsets: [0.75, 0.25, 0, 0.5] },
+  trot: { speed: 13.2, bpm: 96, frequency: 1.35, stride: 0.34, lift: 0.23, duty: 0.58, offsets: [0, 0.5, 0.5, 0] },
+  canter: { speed: 19.8, bpm: 132, frequency: 1.55, stride: 0.43, lift: 0.29, duty: 0.55, offsets: [0.34, 0.67, 0.67, 0] },
+  gallop: { speed: 38, bpm: 178, frequency: 1.9, stride: 0.55, lift: 0.35, duty: 0.42, offsets: [0.42, 0.55, 0.86, 0] },
 };
 
 function startThree() {
@@ -565,6 +565,7 @@ function createMeadowProps() {
 function makeHorse() {
   const horseRoot = new THREE.Group();
   const horse = new THREE.Group();
+  horse.name = 'horse-rig';
   horseRoot.add(horse);
 
   const furTexture = makeFurTexture();
@@ -701,6 +702,7 @@ function makeHorse() {
 
   const headPartEnd = horse.children.length;
   const headRig = new THREE.Group();
+  headRig.name = 'head-rig';
   headRig.position.set(0, 1.9, 0.55);
   horse.add(headRig);
   horse.updateMatrixWorld(true);
@@ -709,6 +711,7 @@ function makeHorse() {
   }
 
   const tail = new THREE.Group();
+  tail.name = 'tail-rig';
   tail.position.set(0, 1.99, -1.14);
   horse.add(tail);
   ellipsoid(tail, coatShade, [0, -0.08, -0.08], [0.17, 0.17, 0.21], [0.15, 0, 0]);
@@ -768,7 +771,9 @@ function makeHorse() {
 
   const legs = [];
   function makeLeg(side, z, isHind) {
+    const legName = `${isHind ? 'hind' : 'fore'}-${side < 0 ? 'left' : 'right'}`;
     const hip = new THREE.Group();
+    hip.name = `${legName}-hip`;
     hip.position.set(side * (isHind ? 0.36 : 0.32), isHind ? 1.56 : 1.55, z);
     horse.add(hip);
 
@@ -790,6 +795,7 @@ function makeHorse() {
       );
       bone.castShadow = true;
       const joint = new THREE.Group();
+      joint.name = `${legName}-joint-${index}`;
       joint.position.y = -length;
       parent.add(joint);
       const jointRadius = bottomRadius * (index === 0 && isHind ? 1.35 : 1.05);
@@ -829,6 +835,127 @@ function makeHorse() {
   return { horseRoot, horse, legs, tail, headRig };
 }
 
+function smoothstep(value) {
+  return value * value * (3 - 2 * value);
+}
+
+function createHorseAnimations(horse, legs, headRig, tail) {
+  const mixer = new THREE.AnimationMixer(horse);
+  const sampleCount = 48;
+
+  function makeTrack(path, duration, sample) {
+    const times = [];
+    const values = [];
+    for (let i = 0; i <= sampleCount; i += 1) {
+      const progress = i / sampleCount;
+      times.push(progress * duration);
+      values.push(sample(progress));
+    }
+    return new THREE.NumberKeyframeTrack(path, times, values);
+  }
+
+  function makeGaitClip(name, gait) {
+    const duration = 1;
+    const tracks = [];
+
+    legs.forEach((leg, index) => {
+      const offset = gait.offsets[index];
+      const sampleLeg = (progress) => {
+        const phase = (progress + offset) % 1;
+        const stride = gait.stride * (leg.isHind ? 0.84 : 1);
+        const flexion = gait.lift + (leg.isHind ? 0.32 : 0.22);
+        let hipAngle;
+        let kneeFlex;
+
+        if (phase < gait.duty) {
+          const stance = smoothstep(phase / gait.duty);
+          hipAngle = THREE.MathUtils.lerp(-stride * 0.62, stride * 0.58, stance);
+          kneeFlex = 0.025 + Math.sin(Math.PI * phase / gait.duty) * 0.035;
+        } else {
+          const swing = (phase - gait.duty) / (1 - gait.duty);
+          const easedSwing = smoothstep(swing);
+          hipAngle = THREE.MathUtils.lerp(stride * 0.58, -stride * 0.62, easedSwing);
+          kneeFlex = Math.sin(Math.PI * swing) * flexion;
+        }
+
+        return { hipAngle, kneeFlex };
+      };
+
+      tracks.push(makeTrack(`${leg.hip.name}.rotation[x]`, duration, (progress) => (
+        sampleLeg(progress).hipAngle
+      )));
+
+      if (leg.isHind) {
+        tracks.push(makeTrack(`${leg.joints[0].name}.rotation[x]`, duration, (progress) => (
+          -0.07 + sampleLeg(progress).kneeFlex * 0.38
+        )));
+        tracks.push(makeTrack(`${leg.joints[1].name}.rotation[x]`, duration, (progress) => (
+          0.14 + sampleLeg(progress).kneeFlex * 0.48
+        )));
+        tracks.push(makeTrack(`${leg.joints[2].name}.rotation[x]`, duration, (progress) => (
+          -0.08 - sampleLeg(progress).kneeFlex * 0.2
+        )));
+      } else {
+        tracks.push(makeTrack(`${leg.joints[0].name}.rotation[x]`, duration, (progress) => (
+          sampleLeg(progress).kneeFlex * 0.82
+        )));
+        tracks.push(makeTrack(`${leg.joints[1].name}.rotation[x]`, duration, (progress) => (
+          0.025 - sampleLeg(progress).kneeFlex * 0.22
+        )));
+      }
+    });
+
+    tracks.push(makeTrack('horse-rig.position[y]', duration, (progress) => {
+      const suspension = Math.max(0, Math.sin((progress - gait.duty * 0.72) * Math.PI * 2));
+      return suspension * suspension * gait.lift * 0.09;
+    }));
+    tracks.push(makeTrack('horse-rig.rotation[z]', duration, (progress) => (
+      Math.sin(progress * Math.PI * 4) * gait.stride * 0.018
+    )));
+    tracks.push(makeTrack('head-rig.rotation[x]', duration, (progress) => (
+      -0.015 - Math.sin(progress * Math.PI * 2 + 0.4) * gait.stride * 0.11
+    )));
+    tracks.push(makeTrack('head-rig.rotation[z]', duration, (progress) => (
+      Math.sin(progress * Math.PI * 2) * 0.012
+    )));
+    tracks.push(makeTrack('tail-rig.rotation[x]', duration, (progress) => (
+      Math.sin(progress * Math.PI * 4 + 0.7) * (0.075 + gait.stride * 0.11)
+    )));
+    tracks.push(makeTrack('tail-rig.rotation[z]', duration, (progress) => (
+      Math.sin(progress * Math.PI * 2 + 1.2) * 0.045
+    )));
+
+    return new THREE.AnimationClip(name, duration, tracks);
+  }
+
+  const idleTracks = [
+    makeTrack('horse-rig.position[y]', 2.4, (progress) => (
+      0.008 + Math.sin(progress * Math.PI * 2) * 0.006
+    )),
+    makeTrack('head-rig.rotation[x]', 2.4, (progress) => (
+      -0.012 + Math.sin(progress * Math.PI * 2 + 0.6) * 0.014
+    )),
+    makeTrack('head-rig.rotation[z]', 2.4, (progress) => (
+      Math.sin(progress * Math.PI * 2) * 0.006
+    )),
+    makeTrack('tail-rig.rotation[x]', 2.4, (progress) => (
+      Math.sin(progress * Math.PI * 2) * 0.035
+    )),
+  ];
+  const idleAction = mixer.clipAction(new THREE.AnimationClip('idle', 2.4, idleTracks));
+  idleAction.setLoop(THREE.LoopRepeat, Infinity);
+
+  const gaitActions = {};
+  for (const [name, gait] of Object.entries(GATES)) {
+    const action = mixer.clipAction(makeGaitClip(name, gait));
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.setEffectiveTimeScale(gait.frequency);
+    gaitActions[name] = action;
+  }
+
+  return { mixer, idleAction, gaitActions };
+}
+
 createMeadowProps();
 const { horseRoot, horse, legs, tail, headRig } = makeHorse();
 
@@ -838,8 +965,14 @@ let pathAngle = 0;
 let selectedGait = 'walk';
 let pace = 0.85;
 let isPlaying = !prefersReducedMotion.matches;
+const horseAnimation = createHorseAnimations(horse, legs, headRig, tail);
+let activeGaitAction = horseAnimation.gaitActions[selectedGait];
+if (isPlaying) {
+  activeGaitAction.reset().setEffectiveTimeScale(GATES[selectedGait].frequency * pace).play();
+} else {
+  horseAnimation.idleAction.reset().play();
+}
 let isFollowing = true;
-let elapsed = 0;
 let lastHudUpdate = 0;
 let userOrbiting = false;
 let lastSvgFrame = 0;
@@ -887,7 +1020,30 @@ function updateHud() {
 
 function setGait(gait) {
   if (!Object.hasOwn(GATES, gait)) return;
+  if (gait === selectedGait) return;
+  const previousAction = activeGaitAction;
   selectedGait = gait;
+  activeGaitAction = horseAnimation.gaitActions[gait];
+  if (isPlaying) {
+    activeGaitAction.reset().setEffectiveTimeScale(GATES[gait].frequency * pace).play();
+    previousAction.crossFadeTo(activeGaitAction, 0.42, false);
+  } else {
+    previousAction.stop();
+    activeGaitAction.stop();
+  }
+  updateHud();
+}
+
+function setPlaying(playing) {
+  if (playing === isPlaying) return;
+  isPlaying = playing;
+  if (isPlaying) {
+    activeGaitAction.reset().setEffectiveTimeScale(GATES[selectedGait].frequency * pace).play();
+    horseAnimation.idleAction.crossFadeTo(activeGaitAction, 0.32, false);
+  } else {
+    horseAnimation.idleAction.reset().play();
+    activeGaitAction.crossFadeTo(horseAnimation.idleAction, 0.32, false);
+  }
   updateHud();
 }
 
@@ -896,12 +1052,12 @@ document.querySelectorAll('.gait-button').forEach((button) => {
 });
 
 document.querySelector('#play-button').addEventListener('click', () => {
-  isPlaying = !isPlaying;
-  updateHud();
+  setPlaying(!isPlaying);
 });
 
 document.querySelector('#speed-slider').addEventListener('input', (event) => {
   pace = Number(event.currentTarget.value) / 100;
+  activeGaitAction.setEffectiveTimeScale(GATES[selectedGait].frequency * pace);
   updateHud();
 });
 
@@ -927,8 +1083,7 @@ window.addEventListener('keydown', (event) => {
   if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'BUTTON', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
   if (event.code === 'Space') {
     event.preventDefault();
-    isPlaying = !isPlaying;
-    updateHud();
+    setPlaying(!isPlaying);
   }
   if (/^[1-4]$/.test(event.key)) {
     setGait(Object.keys(GATES)[Number(event.key) - 1]);
@@ -937,8 +1092,7 @@ window.addEventListener('keydown', (event) => {
 
 prefersReducedMotion.addEventListener('change', (event) => {
   if (event.matches) {
-    isPlaying = false;
-    updateHud();
+    setPlaying(false);
   }
 });
 
@@ -962,9 +1116,8 @@ function animate() {
   if (usingSvgPreview && timestamp - lastSvgFrame < 1000 / 24) return;
   lastSvgFrame = timestamp;
   const delta = Math.min(clock.getDelta(), 0.05);
-  elapsed += delta;
   const gait = GATES[selectedGait];
-  const cycle = elapsed * gait.frequency * Math.PI * 2;
+  horseAnimation.mixer.update(delta);
 
   if (isPlaying) {
     const metersPerSecond = (gait.speed / 3.6) * pace;
@@ -972,30 +1125,6 @@ function animate() {
     pathAngle += (metersPerSecond * 0.13 * delta) / meanRadius;
     setHorsePath();
   }
-
-  const motion = isPlaying ? 1 : 0.13;
-  horse.position.y = Math.sin(cycle * 2) * (isPlaying ? gait.lift * 0.045 : 0.008);
-  horse.rotation.z = Math.sin(elapsed * 1.3) * (isPlaying ? 0.008 : 0.004);
-  headRig.rotation.x = Math.sin(elapsed * (isPlaying ? 1.2 : 0.35)) * (isPlaying ? 0.028 : 0.008);
-  headRig.rotation.z = Math.sin(elapsed * 0.8) * (isPlaying ? 0.014 : 0.004);
-  tail.rotation.x = Math.sin(elapsed * (isPlaying ? 2.6 : 0.55)) * (isPlaying ? 0.12 : 0.035);
-  tail.rotation.z = Math.sin(elapsed * 1.8) * (isPlaying ? 0.055 : 0.018);
-
-  legs.forEach((leg, index) => {
-    const phase = cycle + gait.phases[index];
-    const swing = Math.sin(phase);
-    const lift = Math.max(0, Math.cos(phase - 0.65));
-    const amplitude = gait.stride * motion;
-    leg.hip.rotation.x = swing * amplitude * (leg.isHind ? 0.78 : 1);
-    if (leg.joints.length === 2) {
-      leg.joints[0].rotation.x = 0.04 + lift * gait.lift * motion;
-      leg.joints[1].rotation.x = -0.025 - lift * gait.lift * 0.22 * motion;
-    } else {
-      leg.joints[0].rotation.x = -0.06 - swing * amplitude * 0.2;
-      leg.joints[1].rotation.x = 0.12 + lift * gait.lift * motion;
-      leg.joints[2].rotation.x = -0.04 - lift * gait.lift * 0.15 * motion;
-    }
-  });
 
   if (isFollowing && !userOrbiting) {
     const nextTarget = horseRoot.position.clone().add(new THREE.Vector3(0, 1.4, 0));
